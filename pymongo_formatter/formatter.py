@@ -9,17 +9,85 @@ import csv
 
 from mongodb_formatter.nested_dict import Nested_Dict
 
+class Doc_Formatter(object):
+
+    @staticmethod
+    def date_map_field(doc, field, time_format=None):
+        '''
+        Given a field that contains a datetime we want it to be output as a string otherwise
+        pprint and other functions will abandon ship when they meet BSON time objects
+        '''
+
+        if time_format is None:
+            time_format = "%d-%b-%Y %H:%M"
+        d = Nested_Dict(doc)
+        if d.has_key(field):
+            value = d.get_value(field)
+            if isinstance(value, datetime):
+                d.set_value(field, value.strftime(time_format))
+            else:
+                d.set_value(field, datetime.fromtimestamp(value / 1000))
+
+        return d.dict_value()
+
+    @staticmethod
+    def select_fields(doc, field_list):
+        '''
+        Take 'doc' and create a new doc using only keys from the 'fields' list.
+        Supports referencing fields using dotted notation "a.b.c" so we can parse
+        nested fields the way MongoDB does. The nested field class is a hack. It should
+        be a sub-class of dict.
+        '''
+
+        if field_list is None or len(field_list) == 0:
+            return doc
+
+        newDoc = Nested_Dict({})
+        oldDoc = Nested_Dict(doc)
+
+        for i in field_list:
+            if oldDoc.has_key(i):
+                # print( "doc: %s" % doc )
+                # print( "i: %s" %i )
+                newDoc.set_value(i, oldDoc.get_value(i))
+        return newDoc.dict_value()
+
+    @staticmethod
+    def date_map(doc, datemap_list, time_format=None):
+        '''
+        For all the datetime fields in "datemap" find that key in doc and map the datetime object to
+        a strftime string. This pprint and others will print out readable datetimes.
+        '''
+        if datemap_list:
+            for i in datemap_list:
+                if isinstance(i, datetime):
+                    doc=CursorFormatter.date_map_field(doc, i, time_format=time_format)
+        return doc
+
+    def format(self,doc):
+        new_doc = Doc_Formatter.select_fields( doc, self._select_fields)
+        return Doc_Formatter.date_map( new_doc, self._date_fields)
+
+    def __init__(self, doc, select_fields, date_fields):
+
+        self._select_fields = select_fields
+        self._date_fields = date_fields
+        self._doc = doc
+
+    def __call__(self):
+        return self.format( self._doc)
+
 class CursorFormatter(object):
     '''
     If root is a file name output the content to that file.
     '''
 
-    def __init__(self, filename="", formatter="json"):
+    def __init__(self, cursor, filename="", formatter="json"):
 
 
-        self._filename = filename
+        self._filename  = filename
         self._formatter = formatter
-
+        self._cursor    = cursor
 
 
     def results(self):
@@ -38,60 +106,11 @@ class CursorFormatter(object):
             if fh is not sys.stdout:
                 fh.close()
 
-    @staticmethod
-    def dateMapField(doc, field, time_format=None):
-        '''
-        Given a field that contains a datetime we want it to be output as a string otherwise
-        pprint and other functions will abondon ship when they meet BSON time objects
-        '''
 
-        if time_format is None:
-            time_format = "%d-%b-%Y %H:%M"
-        d = Nested_Dict(doc)
-        if d.has_key(field):
-            value = d.get_value(field)
-            if isinstance(value, datetime):
-                d.set_value(field, value.strftime(time_format))
-            else:
-                d.set_value(field, datetime.fromtimestamp(value / 1000))
+    def mapper(self, doc, field_map, date_map, time_format=None):
+        return CursorFormatter.fieldMapper( doc, field_map ).
 
-        return d.dict_value()
-
-    @staticmethod
-    def fieldMapper(doc, fields):
-        '''
-        Take 'doc' and create a new doc using only keys from the 'fields' list.
-        Supports referencing fields using dotted notation "a.b.c" so we can parse
-        nested fields the way MongoDB does. The nested field class is a hack. It should
-        be a sub-class of dict.
-        '''
-
-        if fields is None or len(fields) == 0:
-            return doc
-
-        newDoc = Nested_Dict({})
-        oldDoc = Nested_Dict(doc)
-
-        for i in fields:
-            if oldDoc.has_key(i):
-                # print( "doc: %s" % doc )
-                # print( "i: %s" %i )
-                newDoc.set_value(i, oldDoc.get_value(i))
-        return newDoc.dict_value()
-
-    @staticmethod
-    def dateMapper(doc, datemap, time_format=None):
-        '''
-        For all the fields in "datemap" find that key in doc and map the datetime object to
-        a strftime string. This pprint and others will print out readable datetimes.
-        '''
-        if datemap:
-            for i in datemap:
-                if isinstance(i, datetime):
-                    CursorFormatter.dateMapField(doc, i, time_format=time_format)
-        return doc
-
-    def printCSVCursor(self, c, fieldnames, datemap, time_format=None):
+    def printCSVCursor(self, fieldnames, datemap, time_format=None):
         '''
         Output CSV format. items are separated by commas. We only output the fields listed
         in the 'fieldnames'. We datemap fields listed in 'datemap'. If a datemap listed field
@@ -102,7 +121,7 @@ class CursorFormatter(object):
             writer = csv.DictWriter(output, fieldnames=fieldnames)
             writer.writeheader()
             count = 0
-            for i in c:
+            for i in self._cursor:
                 self._results.append(i)
                 count = count + 1
                 d = CursorFormatter.fieldMapper(i, fieldnames)
@@ -122,7 +141,7 @@ class CursorFormatter(object):
 
         return count
 
-    def printJSONCursor(self, c, fieldnames, datemap, time_format=None):
+    def printJSONCursor(self, fieldnames, datemap, time_format=None):
         """
 
         Output plan json objects.
@@ -137,7 +156,7 @@ class CursorFormatter(object):
         count = 0
 
         with self._smart_open(self._filename) as output:
-            for i in c:
+            for i in self._cursor:
                 # print( "processing: %s" % i )
                 # print( "fieldnames: %s" % fieldnames )
                 self._results.append(i)
@@ -149,16 +168,16 @@ class CursorFormatter(object):
 
         return count
 
-    def printCursor(self, c, fieldnames=None, datemap=None, time_format=None):
+    def printCursor(self, fieldnames=None, datemap=None, time_format=None):
         '''
         Output a cursor to a filename or stdout if filename is "-".
         fmt defines whether we output CSV or JSON.
         '''
 
         if self._format == 'csv':
-            count = self.printCSVCursor(c, fieldnames, datemap, time_format)
+            count = self.printCSVCursor(fieldnames, datemap, time_format)
         else:
-            count = self.printJSONCursor(c, fieldnames, datemap, time_format)
+            count = self.printJSONCursor( fieldnames, datemap, time_format)
 
         return count
 
