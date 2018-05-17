@@ -4,6 +4,29 @@ Created on 4 Apr 2017
 @author: jdrumgoole
 '''
 
+class DotDict(dict):
+
+    def __init__(self, *args):
+        super().__init__(args)
+
+    def __getitem__(self, key):
+        if "." in key :
+            ( first, dot, rest ) = key.partition( "." )
+            nested_dict = dict.__getitem__( self, first)
+            return DotDict.__getitem__( nested_dict, rest )
+        else:
+            return dict.__getitem__(self, key)
+
+    def __setitem__(self, key, val):
+        if "." in key :
+            ( first, dot, rest ) = key.partition( "." )
+            if first in self:
+                nested_dict = dict.__getitem__( self, first)
+            else:
+                nested_dict = dict.__setitem__(self, first, {})
+            return DotDict.__setitem__( nested_dict, rest, val )
+        else:
+            return dict.__setitem__(self, key, val)
 
 class Nested_Dict(object):
     '''

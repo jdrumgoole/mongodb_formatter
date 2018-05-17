@@ -9,6 +9,52 @@ import csv
 
 from mongodb_formatter.nested_dict import Nested_Dict
 
+class Transform(object):
+
+    def __init__(self):
+        pass
+
+    def __call__(self, doc):
+        return doc
+
+class Date_Transform(object):
+
+    def __init__(self, tformat=None):
+        super().__init__()
+        if tformat is None:
+            self._tformat = "%d-%b-%Y %H:%M"
+        else:
+            self._tformat = tformat
+
+    def __call__(self, doc):
+        d = Nested_Dict(doc)
+        if d.has_key(field):
+            value = d.get_value(field)
+            if isinstance(value, datetime):
+                d.set_value(field, value.strftime(time_format))
+            else:
+                d.set_value(field, datetime.fromtimestamp(value / 1000))
+
+        return d.dict_value()
+class Cursor_Processor(object):
+
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self._xform_list = []
+
+    def add_transform(self, xform:Transform):
+        self._xform_list.append(xform)
+
+    def transform(self, doc):
+        for i in self._xform_list:
+            doc = i(doc)
+        return doc
+
+    def process(self):
+        for i in self._cursor:
+            yield self.transform(i)
+
+
 class Doc_Formatter(object):
 
     @staticmethod
@@ -105,7 +151,6 @@ class CursorFormatter(object):
         finally:
             if fh is not sys.stdout:
                 fh.close()
-
 
     def mapper(self, doc, field_map, date_map, time_format=None):
         return CursorFormatter.fieldMapper( doc, field_map ).
